@@ -1,3 +1,4 @@
+import 'package:byciclechecker/mapactivity.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:path/path.dart';
@@ -5,12 +6,22 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:flushbar/flushbar.dart';
 import 'package:overlay_support/overlay_support.dart';
-
+import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:intl/intl.dart';
 
 List<CameraDescription> cameras;
 
+final InterstitialAd myInterstitial = InterstitialAd(
+  adUnitId: 'ca-app-pub-3940256099942544/4411468910',
+  request: AdRequest(),
+  listener: AdListener(),
+);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MobileAds.instance.initialize();
   cameras = await availableCameras();
   runApp(MyApp());
 }
@@ -64,6 +75,7 @@ class _CameraAppState extends State<CameraApp> {
   @override
   void initState() {
     super.initState();
+    myInterstitial.load();
     controller = CameraController(cameras[0], ResolutionPreset.high);
     controller.initialize().then((_) {
       if (!mounted) {
@@ -96,6 +108,21 @@ class _CameraAppState extends State<CameraApp> {
             final directory = await getApplicationDocumentsDirectory();
             final path = directory.path;
 
+            //位置情報の取得
+            Position position = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.best);
+
+            //sharedpreferenceの用意
+            SharedPreferences prefs = await SharedPreferences.getInstance();
+            prefs.setDouble("lat", position.latitude);
+            prefs.setDouble("lng", position.longitude);
+
+            //現在時刻の取得
+            var format = DateFormat.Hm();
+            var dateString = format.format(DateTime.now());
+
+            //時刻をSharedPreferenceに保存
+            prefs.setString("Date", dateString);
 
             //撮影
             final image = await controller.takePicture();
@@ -106,7 +133,7 @@ class _CameraAppState extends State<CameraApp> {
             //画像の保存
             await imageFile.writeAsBytes(await image.readAsBytes());
 
-            
+            //ダイアログの表示
             Flushbar(
               flushbarPosition: FlushbarPosition.TOP,
               flushbarStyle: FlushbarStyle.FLOATING,
@@ -151,13 +178,97 @@ class TabPage2 extends StatelessWidget{
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: FutureBuilder<dynamic>(
-        future: loadimage(),
-        builder: (context, snapshot){
-          return snapshot.hasData ? Image.memory(snapshot.data.readAsBytesSync()) : Icon(icon);
+    return Scaffold(
+        body: Container(
+        constraints: BoxConstraints.expand(),
+        child: FutureBuilder<dynamic>(
+          future: loadimage(),
+          builder: (context, snapshot){
+            if(snapshot.hasData){
+              try{
+                return FutureBuilder(
+                  future: SharedPreferences.getInstance(),
+                  builder: (context, snapshot2){
+                    if(snapshot2.hasData){
+                      //撮影時間の取得
+                      var taketime = snapshot2.data.getString("Date");
+                      //datetime型に変換
+                      DateTime past = getdatetime(taketime);
+
+                      //現在の時刻取得
+                      var format = DateFormat.Hm();
+                      var dateString = format.format(DateTime.now());
+                      
+                      //datetime型に変換
+                      DateTime now = getdatetime(dateString);
+
+                      //diff算出(時)
+                      var diffhour = now.difference(past).inHours;
+
+                      //diff算出(分)
+                      var diffmin = now.difference(past).inMinutes;
+
+                      var resultTime;
+
+                      //表示時間の設定
+                      if(diffhour == 0){
+                        resultTime = diffmin.toString() + "分";
+                      }else{
+                        resultTime = diffhour.toString() + "時間" + diffmin.toString() + "分";
+                      }
+
+                      return Stack(
+                        children: [
+                          Container(
+                            constraints: BoxConstraints.expand(),
+                            child: Image.memory(snapshot.data.readAsBytesSync()),
+                          ),
+                          Container(
+                            alignment: Alignment.bottomLeft,
+                            margin: EdgeInsets.all(20),
+                            child: Text(
+                              "${resultTime}",
+                              style: TextStyle(
+                                fontSize: 40,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87
+                              ),
+                            ),
+                          )
+                        ],
+                      );
+                    }else{
+                      return CircularProgressIndicator();
+                    }
+                    
+
+                  },
+                );
+              }catch(e){
+                return Center(
+                  child: Container(
+                    child: Icon(icon),
+                  ),
+                );
+              }
+            }else{
+              return Center(
+                child: Container(
+                  child: Icon(icon),
+                ),
+              );
+            }
+          },
+        )
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Colors.teal,
+        child: Icon(Icons.map_outlined),
+        onPressed: (){
+          myInterstitial.load();
+          Navigator.push(context, MaterialPageRoute(builder: (context) => mapactivity()));
         },
-      )
+      ),
     );
   }
 
@@ -168,5 +279,17 @@ class TabPage2 extends StatelessWidget{
     final imagepath = '$path/image.png';
     return File(imagepath);
   }
-}
 
+  DateTime getdatetime(String date){
+    final _dateFormatter = DateFormat("HH:mm");
+    DateTime result;
+
+    // String→DateTime変換
+    try {
+      result = _dateFormatter.parseStrict(date);
+    } catch(e){
+      // 変換に失敗した場合の処理
+    }
+    return result;
+  }
+}
